@@ -47,7 +47,7 @@ public class PushReceiver extends BroadcastReceiver{
         Intent i = new Intent();
         i.setClassName("com.tokbox.android.tutorials.basic_video_chat", "com.tokbox.android.tutorials.basic_video_chat.MainActivity");
         i.putExtra("session",notificationText);
-        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_HISTORY | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         context.startActivity(i);
 
 

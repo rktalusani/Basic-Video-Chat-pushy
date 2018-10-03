@@ -4,11 +4,15 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.Loader;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationManager;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
+import android.net.ConnectivityManager;
 import android.net.Uri;
 import android.opengl.GLSurfaceView;
 import android.os.AsyncTask;
@@ -22,9 +26,11 @@ import android.support.v7.app.AppCompatActivity;
 import android.support.annotation.NonNull;
 import android.Manifest;
 import android.os.Bundle;
+import android.telephony.TelephonyManager;
 import android.text.InputType;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -61,8 +67,10 @@ import org.json.JSONObject;
 import org.w3c.dom.Text;
 
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
 
@@ -117,6 +125,7 @@ public class MainActivity extends AppCompatActivity
     public static final String MY_PREFS_NAME = "MyPrefsFile";
     TextView timerView;
     long startTime = 0;
+    String totalTime="";
 
     CountDownTimer callTimer=null;
     CountDownTimer incomingCallTimer=null;
@@ -135,7 +144,7 @@ public class MainActivity extends AppCompatActivity
 
             timerView = (TextView)findViewById(R.id.timer);
             timerView.setText(String.format("%d:%02d", minutes, seconds));
-
+            totalTime = String.format("%d:%02d", minutes, seconds);
             timerHandler.postDelayed(this, 1000);
         }
     };
@@ -183,6 +192,9 @@ public class MainActivity extends AppCompatActivity
 
             cb.setVisibility(View.VISIBLE);
             lb.setVisibility(View.INVISIBLE);
+
+            TextView tv = (TextView)findViewById(R.id.who);
+            tv.setText("Logged in as "+localUser);
         }
 
         final Button audiobtn = (Button)findViewById(R.id.audio);
@@ -320,6 +332,8 @@ public class MainActivity extends AppCompatActivity
                         SharedPreferences.Editor editor = getSharedPreferences(MY_PREFS_NAME, MODE_PRIVATE).edit();
                         editor.putString("username", localUser);
                         editor.apply();
+                        TextView tv = (TextView)findViewById(R.id.who);
+                        tv.setText("Logged in as "+localUser);
                     }
                 });
                 builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
@@ -333,10 +347,22 @@ public class MainActivity extends AppCompatActivity
             }
         });
 
+
         if(getIntent() !=null && getIntent().getExtras() !=null && getIntent().getExtras().getString("session")!=null){
             Log.e("CALL","Calling receiveCall - "+getIntent().getExtras().getString("session"));
             receiveCall(this,getIntent());
         }
+
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event)
+    {
+        if ((keyCode == KeyEvent.KEYCODE_BACK))
+        {
+            finish();
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     private void startOutboundCallTimer(){
@@ -416,6 +442,45 @@ public class MainActivity extends AppCompatActivity
         }.start();
     }
 
+    private void sendSessionData(){
+        RequestQueue queue = Volley.newRequestQueue(this);
+        String url = "http://nexmoapac.hopto.me/opentok/savesession.php";
+        StringRequest postRequest = new StringRequest(Request.Method.POST, url,
+                new Response.Listener<String>()
+                {
+                    @Override
+                    public void onResponse(String response) {
+                        // response
+                        Log.d("Response", response);
+                    }
+                },
+                new Response.ErrorListener()
+                {
+                    @Override
+                    public void onErrorResponse(VolleyError error) {
+                        // error
+                        Log.d("Error.Response", error.getLocalizedMessage());
+                    }
+                }
+        ) {
+            @Override
+            protected Map<String, String> getParams()
+            {
+                Map<String, String>  params = new HashMap<String, String>();
+                Location l = getLocation();
+                params.put("latitude", String.valueOf(l.getLatitude()));
+                params.put("longitude", String.valueOf(l.getLongitude()));
+                params.put("localuser", localUser);
+                params.put("remoteuser", remoteUser);
+                params.put("networktype", getNetworkType());
+                params.put("sessionid", currentSessionId);
+                params.put("totaltime", totalTime);
+
+                return params;
+            }
+        };
+        queue.add(postRequest);
+    }
     private String sendPushForUser(String user){
         String sessionid = mSession.getSessionId();
         if(sessionid==null || sessionid ==""){
@@ -464,6 +529,7 @@ public class MainActivity extends AppCompatActivity
 
         RequestQueue queue = Volley.newRequestQueue(this);
         String url ="http://nexmoapac.hopto.me/opentok/savetoken.php?user="+localUser+"&token="+token;
+        Log.e("SENDTOKEN",url);
 
 // Request a string response from the provided URL.
         StringRequest stringRequest = new StringRequest(Request.Method.GET, url,
@@ -565,6 +631,66 @@ public class MainActivity extends AppCompatActivity
         }));
     }
 
+    private String getNetworkType(){
+        ConnectivityManager manager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        boolean is3g = manager.getNetworkInfo(ConnectivityManager.TYPE_MOBILE)
+                .isConnectedOrConnecting();
+        boolean isWifi = manager.getNetworkInfo(ConnectivityManager.TYPE_WIFI)
+                .isConnectedOrConnecting();
+
+        System.out.println(is3g + " net " + isWifi);
+
+        if(isWifi)
+            return "WiFi";
+        if(is3g) {
+            TelephonyManager mTelephonyManager = (TelephonyManager)
+                    MainActivity.this.getSystemService(Context.TELEPHONY_SERVICE);
+            int networkType = mTelephonyManager.getNetworkType();
+            switch (networkType) {
+                case TelephonyManager.NETWORK_TYPE_GPRS:
+                case TelephonyManager.NETWORK_TYPE_EDGE:
+                case TelephonyManager.NETWORK_TYPE_CDMA:
+                case TelephonyManager.NETWORK_TYPE_1xRTT:
+                case TelephonyManager.NETWORK_TYPE_IDEN:
+                    return "2G";
+                case TelephonyManager.NETWORK_TYPE_UMTS:
+                case TelephonyManager.NETWORK_TYPE_EVDO_0:
+                case TelephonyManager.NETWORK_TYPE_EVDO_A:
+                case TelephonyManager.NETWORK_TYPE_HSDPA:
+                case TelephonyManager.NETWORK_TYPE_HSUPA:
+                case TelephonyManager.NETWORK_TYPE_HSPA:
+                case TelephonyManager.NETWORK_TYPE_EVDO_B:
+                case TelephonyManager.NETWORK_TYPE_EHRPD:
+                case TelephonyManager.NETWORK_TYPE_HSPAP:
+                    return "3G";
+                case TelephonyManager.NETWORK_TYPE_LTE:
+                    return "4G";
+                default:
+                    return "Unknown";
+            }
+        }
+        return "Unknown";
+    }
+
+    public Location getLocation() {
+        try {
+            LocationManager locationManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
+            if (locationManager != null) {
+                Location lastKnownLocationGPS = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                if (lastKnownLocationGPS != null) {
+                    return lastKnownLocationGPS;
+                } else {
+                    Location loc = locationManager.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
+                    return loc;
+                }
+            } else {
+                return null;
+            }
+        }catch (SecurityException e){
+            Log.e("LocationError",e.getLocalizedMessage());
+            return null;
+        }
+    }
     @Override
     protected void onStart() {
         super.onStart();
@@ -685,7 +811,7 @@ public class MainActivity extends AppCompatActivity
     @AfterPermissionGranted(RC_VIDEO_APP_PERM)
     private void requestPermissions() {
 
-        String[] perms = { Manifest.permission.INTERNET, Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,Manifest.permission.WRITE_EXTERNAL_STORAGE,Manifest.permission.READ_EXTERNAL_STORAGE };
+        String[] perms = { Manifest.permission.INTERNET, Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,Manifest.permission.WRITE_EXTERNAL_STORAGE,Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.ACCESS_FINE_LOCATION };
         if (EasyPermissions.hasPermissions(this, perms)) {
 
         } else {
@@ -741,7 +867,7 @@ public class MainActivity extends AppCompatActivity
         mSession.publish(mPublisher);
 
 
-        //startRecording();
+        startRecording();
     }
 
     @Override
@@ -762,6 +888,7 @@ public class MainActivity extends AppCompatActivity
             stopRecording();
         }
         timerHandler.removeCallbacks(timerRunnable);
+        sendSessionData();
     }
 
     @Override
@@ -836,7 +963,8 @@ public class MainActivity extends AppCompatActivity
             timerHandler.removeCallbacks(timerRunnable);
             Button audiob = (Button)findViewById(R.id.audio);
             audiob.setVisibility(View.INVISIBLE);
-            //stopRecording();
+            stopRecording();
+            mSession.disconnect();
         }
     }
 
